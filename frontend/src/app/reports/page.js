@@ -1,0 +1,163 @@
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import reportService from '../../services/reportService';
+import ReportCard from '../../components/ReportCard';
+import dynamic from 'next/dynamic';
+import { useState, useEffect } from 'react';
+import { Loader2, List, Map as MapIcon } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { useRouter } from 'next/navigation';
+
+const ReportMap = dynamic(() => import('../../components/ReportMap'), {
+    ssr: false,
+    loading: () => <div className="h-[500px] bg-gray-100 flex items-center justify-center">Loading Map...</div>
+});
+
+export default function ReportsPage() {
+    const [viewMode, setViewMode] = useState('list'); // 'list' or 'map'
+    const [filter, setFilter] = useState('my'); // 'my' or 'nearby'
+    const { user, loading: authLoading } = useAuth();
+    const router = useRouter();
+    const [location, setLocation] = useState(null);
+    const [locationError, setLocationError] = useState(null);
+
+    useEffect(() => {
+        if (filter === 'nearby' && !location) {
+            if (!navigator.geolocation) {
+                setLocationError('Geolocation is not supported by your browser');
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    setLocation({
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    });
+                    setLocationError(null);
+                },
+                (error) => {
+                    setLocationError('Unable to retrieve your location');
+                    console.error('Geolocation error:', error);
+                }
+            );
+        }
+    }, [filter, location]);
+
+    const { data: reportsData, isLoading, error } = useQuery({
+        queryKey: ['reports', filter, location],
+        queryFn: async () => {
+            if (filter === 'my') {
+                return await reportService.getMyReports();
+            } else if (filter === 'nearby' && location) {
+                return await reportService.getNearbyReports({
+                    lat: location.lat,
+                    lng: location.lng,
+                    radius: 5000 // 5km radius
+                });
+            }
+            return { data: { reports: [] } };
+        },
+        enabled: !!user && (filter === 'my' || (filter === 'nearby' && !!location)),
+    });
+
+    if (authLoading) return <div className="flex justify-center mt-20"><Loader2 className="animate-spin h-10 w-10 text-blue-600" /></div>;
+
+    if (!user) {
+        return (
+            <div className="text-center mt-20">
+                <p className="text-xl mb-4">Please login to view reports.</p>
+                <button
+                    onClick={() => router.push('/login')}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                    Login
+                </button>
+            </div>
+        );
+    }
+
+    const reports = reportsData?.data?.reports || [];
+
+    return (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="flex flex-col md:flex-row justify-between items-center mb-6 space-y-4 md:space-y-0">
+                <h1 className="text-3xl font-bold text-gray-900">
+                    {filter === 'my' ? 'My Reports' : 'Nearby Reports'}
+                </h1>
+
+                <div className="flex items-center space-x-4">
+                    {/* Filter Toggle */}
+                    <div className="bg-gray-100 p-1 rounded-lg flex">
+                        <button
+                            onClick={() => setFilter('my')}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition ${filter === 'my' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            My Reports
+                        </button>
+                        <button
+                            onClick={() => setFilter('nearby')}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition ${filter === 'nearby' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            Nearby
+                        </button>
+                    </div>
+
+                    {/* View Mode Toggle */}
+                    <div className="flex space-x-2 bg-gray-100 p-1 rounded-lg">
+                        <button
+                            onClick={() => setViewMode('list')}
+                            className={`p-2 rounded-md flex items-center ${viewMode === 'list' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            <List size={20} />
+                        </button>
+                        <button
+                            onClick={() => setViewMode('map')}
+                            className={`p-2 rounded-md flex items-center ${viewMode === 'map' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:text-gray-900'}`}
+                        >
+                            <MapIcon size={20} />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {filter === 'nearby' && locationError && (
+                <div className="bg-red-50 text-red-700 p-4 rounded-md mb-6">
+                    {locationError}. Please enable location services to see nearby reports.
+                </div>
+            )}
+
+            {isLoading ? (
+                <div className="flex justify-center mt-20"><Loader2 className="animate-spin h-10 w-10 text-blue-600" /></div>
+            ) : error ? (
+                <div className="text-center mt-20 text-red-600">Failed to load reports</div>
+            ) : (
+                <>
+                    {viewMode === 'map' ? (
+                        <ReportMap reports={reports} />
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {reports.length > 0 ? (
+                                reports.map((report) => (
+                                    <ReportCard key={report._id} report={report} />
+                                ))
+                            ) : (
+                                <div className="col-span-1 md:col-span-2 text-center py-12 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                                    <p className="text-gray-500 text-lg">No reports found.</p>
+                                    {filter === 'my' && (
+                                        <button
+                                            onClick={() => router.push('/submit')}
+                                            className="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                                        >
+                                            Submit Your First Report
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </>
+            )}
+        </div>
+    );
+}
